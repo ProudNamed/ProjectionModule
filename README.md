@@ -362,7 +362,7 @@ when `VisibleWindow` is set and frame count is high, streaming mode is enabled t
 
 ## showcases
 ### normal projection with useviewport mode on
-![BDYJTB?](https://files.catbox.moe/zcrikr.gif)
+
 ```lua
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
@@ -391,8 +391,10 @@ proj1:SetEnd(endCF)
 proj1:Play()
 ```
 
-### gay ass projections
-![gay ass projections](https://files.catbox.moe/ez4zwp.gif)
+### showcase
+<img src="./gifs/naoya.gif"/>
+
+### projection with trails and useviewport on + 2 projections without useviewport on a sine mirrored path
 
 ```lua
 local Players = game:GetService("Players")
@@ -466,4 +468,5 @@ proj1:Play()
 proj2:Play()
 proj3:Play()
 ```
-
+### showcase
+<img src="./gifs/gay.gif"/>
