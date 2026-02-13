@@ -24,8 +24,6 @@ a roblox character projection / afterimage system that spawns ghost clones of yo
 
 ## installation
 
-load the script and it will register `Projection` into `getgenv()` so it can be accessed globally
-
 ```lua
 local Projection = loadstring(game:HttpGet("https://raw.githubusercontent.com/ProudNamed/ProjectionModule/refs/heads/main/projection.lua"))()
 ```
