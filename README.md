@@ -394,6 +394,7 @@ proj1:Play()
 ### projection with trails and useviewport on + 2 projections without useviewport on a sine mirrored path
 
 ```lua
+local Projection = loadstring(game:HttpGet("https://raw.githubusercontent.com/ProudNamed/ProjectionModule/refs/heads/main/projection.lua"))()
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local hrp = player.Character.HumanoidRootPart
@@ -405,7 +406,7 @@ local proj1 = Projection.new({
     Frames = 120,
     Duration = 6,
     VisibleWindow = 24,
-    UseViewport = false,
+    UseViewport = true,
     Color = Color3.fromRGB(80, 150, 255),
     SettleTime = 0,
     Interpolate = false,
