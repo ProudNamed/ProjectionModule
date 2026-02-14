@@ -1,4 +1,5 @@
-getgenv().Projection = {}
+--BDYJTB 🥀
+local Projection = {}
 Projection.__index = Projection
 
 local Players = game:GetService("Players")
