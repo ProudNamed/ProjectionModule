@@ -298,6 +298,7 @@ function Projection.new(cfg)
 		ShardCount = cfg.ShardCount or 5,
 		ShardLife = cfg.ShardLife or 0.8,
 		VisibleWindow = cfg.VisibleWindow or 0,
+		FrameOffset = cfg.FrameOffset or 0,
 		Color = cfg.Color or Color3.fromRGB(144, 213, 255),
 		Transparency = cfg.Transparency or 0.75,
 		PathFunc = cfg.PathFunc or Projection.Path.Linear,
@@ -319,6 +320,7 @@ function Projection.new(cfg)
 		AnimationSpeed = cfg.AnimationSpeed or 1,
 		AnimationFunc = cfg.AnimationFunc,
 		MirrorMode = cfg.MirrorMode or false,
+		LivePathFunc = cfg.LivePathFunc,
 		_segments = {},
 		_active = false,
 		_projections = {},
@@ -542,15 +544,12 @@ function Projection:_updateMirror(pivotCF, animId, timePos)
 	local model = self._mirrorModel
 	if not model or not model.Parent then return end
 
-	-- Position the mirror at the exact same pivot as the projection
 	if pivotCF then
 		model:PivotTo(pivotCF)
 	end
 
-	-- Drive the mirror's animation with the exact same data as the projection
 	if animId and animId ~= 0 then
 		if animId ~= self._mirrorAnimId then
-			-- Animation changed, load new one
 			if self._mirrorTrack then
 				pcall(self._mirrorTrack.Stop, self._mirrorTrack)
 				pcall(self._mirrorTrack.Destroy, self._mirrorTrack)
@@ -922,6 +921,26 @@ function Projection:_computePivots()
 	return pivots
 end
 
+function Projection:_recomputeLivePivots()
+	local fn = self.LivePathFunc
+	if not fn then return false end
+	local n = self.Frames
+	local oldPivots = self._pivots
+	local div = n > 1 and 1 / (n - 1) or 0
+	local changed = false
+	for i = 1, n do
+		local t = (i - 1) * div
+		local ok, newCF = pcall(fn, i, n, t, oldPivots, self)
+		if ok and typeof(newCF) == "CFrame" then
+			if oldPivots[i] ~= newCF then
+				oldPivots[i] = newCF
+				changed = true
+			end
+		end
+	end
+	return changed
+end
+
 function Projection:_computeAnimData(char)
 	local n, data = self.Frames, create(self.Frames)
 
@@ -993,6 +1012,21 @@ function Projection:SetAnimation(animId, timeStart, timeEnd, reverse, speed)
 	return self
 end
 
+function Projection:SetLivePath(func)
+	self.LivePathFunc = func
+	return self
+end
+
+function Projection:ClearLivePath()
+	self.LivePathFunc = nil
+	return self
+end
+
+function Projection:SetFrameOffset(offset)
+	self.FrameOffset = offset or 0
+	return self
+end
+
 Projection.TimeEasing = {
 	Linear = function(t) return t end,
 	EaseIn = function(t) return t * t end,
@@ -1056,6 +1090,7 @@ function Projection:Play(callback)
 	self._active, self._projectionComplete = true, false
 	local useViewport = self.UseViewport
 	local trailMode = self.TrailMode
+	local frameOffset = max(0, self.FrameOffset or 0)
 
 	if useViewport then self:_createViewport() end
 	local template = useViewport and self:_buildViewportTemplate() or self:_buildTemplate()
@@ -1085,6 +1120,11 @@ function Projection:Play(callback)
 	local n, pivots = self.Frames, self:_computePivots()
 	self._pivots = pivots
 
+	-- Allow initial live path override before any projections are created
+	if self.LivePathFunc then
+		self:_recomputeLivePivots()
+	end
+
 	local mirrorMode = self.MirrorMode
 	if mirrorMode then
 		local mirrorTemplate = self:_buildMirrorTemplate()
@@ -1102,7 +1142,7 @@ function Projection:Play(callback)
 
 	local vw = self.VisibleWindow
 	local streaming = vw > 0 and n > vw * 2
-	local bufferSize = streaming and min(vw + 12, n) or n
+	local bufferSize = streaming and min(vw + 12 + frameOffset, n) or n
 	local lookAhead = streaming and min(8, floor(vw * 0.5)) or 0
 	local settleTime = self.SettleTime
 	local instantSettle = settleTime <= 0
@@ -1246,6 +1286,23 @@ function Projection:Play(callback)
 		if slot then recycleSlot(slot) end
 	end
 
+	-- Re-pivot all live projections to match the (possibly updated) pivots array.
+	-- Used when LivePathFunc changes the path mid-play.
+	local function repivotLiveProjections()
+		for i = 1, bufferSize do
+			local entry = pool[i]
+			if entry and entry.model and entry.model.Parent then
+				local fi = entry.frameIdx
+				if fi and fi >= 1 and fi <= n then
+					local newCF = pivots[fi]
+					if newCF then
+						pcall(function() entry.model:PivotTo(newCF) end)
+					end
+				end
+			end
+		end
+	end
+
 	local uniqueAnims = {}
 	for i = 1, n do local aid = animData[i][1] if aid and aid ~= 0 then uniqueAnims[aid] = true end end
 	if self.PlayAnimation then
@@ -1272,8 +1329,12 @@ function Projection:Play(callback)
 	end
 
 	if not trailMode then
-		local initialVisible = streaming and min(vw, n) or n
-		for i = 1, initialVisible do if vw <= 0 or i <= vw then showProjection(i) end end
+		-- Initial visible range is offset forward by frameOffset
+		local startVisible = 1 + frameOffset
+		local endVisible = streaming and min(startVisible + vw - 1, n) or n
+		for i = startVisible, endVisible do
+			if vw <= 0 or (i - startVisible) < vw then showProjection(i) end
+		end
 	end
 
 	self._projections = pool
@@ -1313,6 +1374,14 @@ function Projection:Play(callback)
 			self._conn = nil
 			cleanup()
 			return
+		end
+
+		-- Live path recompute: update pivots and re-pivot existing live projections
+		if self.LivePathFunc then
+			local changed = self:_recomputeLivePivots()
+			if changed then
+				repivotLiveProjections()
+			end
 		end
 
 		if draining then
@@ -1378,14 +1447,16 @@ function Projection:Play(callback)
 		end
 
 		local exactFrame = progress * (n - 1) + 1
-		local currentIdx, fracPart = max(1, min(floor(exactFrame), n)), exactFrame - floor(exactFrame)
+		local playheadIdx, fracPart = max(1, min(floor(exactFrame), n)), exactFrame - floor(exactFrame)
+		-- currentIdx is what the visible window/shatter logic uses; it's offset forward by frameOffset
+		local currentIdx = min(playheadIdx + frameOffset, n)
 
 		if mirrorMode then
-			local mirrorPivot = interpolate and currentIdx < n and pivots[currentIdx]:Lerp(pivots[currentIdx + 1], fracPart) or pivots[currentIdx]
-			local curAnim = animData[currentIdx]
+			local mirrorPivot = interpolate and playheadIdx < n and pivots[playheadIdx]:Lerp(pivots[playheadIdx + 1], fracPart) or pivots[playheadIdx]
+			local curAnim = animData[playheadIdx]
 			local mTimePos = curAnim[2]
-			if interpolate and currentIdx < n then
-				local nxtAnim = animData[currentIdx + 1]
+			if interpolate and playheadIdx < n then
+				local nxtAnim = animData[playheadIdx + 1]
 				if curAnim[1] == nxtAnim[1] then
 					mTimePos = curAnim[2] + (nxtAnim[2] - curAnim[2]) * fracPart
 				end
@@ -1394,11 +1465,12 @@ function Projection:Play(callback)
 		end
 
 		if self.MovePlayer then
-			hrp.CFrame = interpolate and currentIdx < n and pivots[currentIdx]:Lerp(pivots[currentIdx + 1], fracPart) or pivots[currentIdx]
+			-- MovePlayer always follows the actual playhead, not the offset
+			hrp.CFrame = interpolate and playheadIdx < n and pivots[playheadIdx]:Lerp(pivots[playheadIdx + 1], fracPart) or pivots[playheadIdx]
 		end
 
 		if self.PlayAnimation then
-			local currentAnimData, targetAnimId = animData[currentIdx], animData[currentIdx][1]
+			local currentAnimData, targetAnimId = animData[playheadIdx], animData[playheadIdx][1]
 			if targetAnimId and targetAnimId ~= 0 then
 				local track = self._playerTracks[targetAnimId]
 				if targetAnimId ~= currentPlayerAnimId then
@@ -1409,7 +1481,7 @@ function Projection:Play(callback)
 					if not track.IsPlaying then track:Play(0, 1, 0) end
 					track:AdjustSpeed(0)
 					if interpolate then
-						local nextAnimData = currentIdx < n and animData[currentIdx + 1] or currentAnimData
+						local nextAnimData = playheadIdx < n and animData[playheadIdx + 1] or currentAnimData
 						track.TimePosition = currentAnimData[1] == nextAnimData[1] and currentAnimData[2] + (nextAnimData[2] - currentAnimData[2]) * fracPart or currentAnimData[2]
 					else track.TimePosition = currentAnimData[2] end
 				end
@@ -1441,6 +1513,8 @@ function Projection:Play(callback)
 					end
 				end
 			else
+				-- Non-trail mode: shatter frames the playhead has passed,
+				-- show frames in the window ahead (offset already applied to currentIdx)
 				local shatterEnd = currentIdx - 1
 				local showStart = currentIdx
 
@@ -1462,7 +1536,7 @@ function Projection:Play(callback)
 				end
 			end
 
-			if callback then callback(currentIdx, pool, pivots, animData) end
+			if callback then callback(playheadIdx, pool, pivots, animData) end
 			lastIdx = currentIdx
 		end
 
